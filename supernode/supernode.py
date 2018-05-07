@@ -17,16 +17,16 @@ import json
 addr=("18.18.25.29",18889)
 
 masters={}#
-slaves={}
+slaves={}#
 slavesdoing={}
 taskrescanlist={}
-tasklist={}
+tasklist={}#
 synclist={}
 synclist_m={}
 locklist={}
 locklist["sync"]=False
 locklist["syncm"]=False
-pendinglist=[]
+pendinglist=[]#
 
 
 class checkstate(threading.Thread):
@@ -70,7 +70,7 @@ class checkstate(threading.Thread):
                                 if slaves[x]["renttime"]>0:
                                     pendinglist.append({"renttime":slaves[x]["renttime"],"taskid":slaves[x]["requesttask"]})
                                     taskrelist.remove(x)
-                #print(taskrelist) 
+                #print(taskrelist)
                 for kk in taskrelist:
                     #for x in slaves[kk]["task"]:
                     if slaves[kk]["requesttask"]!="":
@@ -144,6 +144,23 @@ class refreshdoinglist(threading.Thread):
                 if slavesdoing[i]>10:
                     slavesdoing[i]=0
             time.sleep(3)
+
+
+def flushtofile():
+    fd=open("supernode.save","wt")
+    fd.write(str(masters))
+    fd.write("\n")
+    fd.write(str(slaves))
+    fd.write("\n")
+    fd.write(str(tasklist))
+    fd.write("\n")
+    fd.write(str(pendinglist))
+    fd.write("\n")
+    fd.close()
+
+
+#def startupfromfile():
+
 
 
 def informmaster(masterip,slaveid,renttime,taskid):
@@ -259,9 +276,9 @@ class Servers(SRH):
                         else:
                             slaves[i["_id"]]["taskstate"]="avaliable"
                         taskdet=i["task"]
-                        if taskdet==[] and slaves[i["_id"]]["renttime"]>0 and slaves[i["_id"]]["task"]!=[] and slaves[i["_id"]]["requesttask"]!="":
-                            pendinglist.append({"taskid":slaves[i["_id"]]["requesttask"],"renttime":slaves[i["_id"]]["renttime"]})
-                            slaves[i["_id"]]["spendtime"]=0 
+                        #if taskdet==[] and slaves[i["_id"]]["renttime"]>0 and slaves[i["_id"]]["task"]!=[] and slaves[i["_id"]]["requesttask"]!="":
+                        #    pendinglist.append({"taskid":slaves[i["_id"]]["requesttask"],"renttime":slaves[i["_id"]]["renttime"]})
+                        #    slaves[i["_id"]]["spendtime"]=0
                         slavetask=[]
                         for x in taskdet:
                             if "_id" in x:
@@ -270,6 +287,9 @@ class Servers(SRH):
                                 tasklist[x["taskid"]]["alltime"]=tasklist[x["taskid"]]["alltime"]-x["spendtime"]
                                 if slaves[i["_id"]]["renttime"]<=0:
                                     print(i["_id"]+":finishtime")
+                        if taskdet==[] and slaves[i["_id"]]["renttime"]>0 and slaves[i["_id"]]["task"]!=[] and slaves[i["_id"]]["requesttask"]!="":
+                            pendinglist.append({"taskid":slaves[i["_id"]]["requesttask"],"renttime":slaves[i["_id"]]["renttime"]})
+                            slaves[i["_id"]]["spendtime"]=0
                         slaves[i["_id"]]["task"]=slavetask
                             #slaves[i["_id"]]["taskstate"]="avaliable"
                         #slavesdoing[i["_id"]]=0
@@ -346,6 +366,8 @@ def getinput():
             getpendinglist()
         if raw=="l":
             print(locklist["sync"])
+        if raw=="flush":
+
 ocmdist={}
 ocmdist["server"] = socketserver.ThreadingTCPServer(addr,Servers)
 #server.serve_forever()
@@ -353,11 +375,20 @@ ocmdist["server"] = socketserver.ThreadingTCPServer(addr,Servers)
 class dlsocmserver(threading.Thread):
     def __init__(self):
         threading.Thread.__init__(self)
-    
+
     def run(self):
         #server = socketserver.ThreadingTCPServer(addr,Servers)
         ocmdist["server"].serve_forever()
 
+if os.path.exists("supernode.save"):
+    try:
+        fd=open("supernode.save",r)
+        masters=eval(fd.readline())
+        slaves=eval(fd.readline())
+        tasklist=eval(fd.readline())
+        pendinglist=eval(fd.readline())
+    except:
+        print("read file error")
 
 a=dlsocmserver()
 a.start()
@@ -368,4 +399,3 @@ c.start()
 d=taskrescan()
 d.start()
 getinput()
-
