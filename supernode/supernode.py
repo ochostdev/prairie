@@ -349,6 +349,19 @@ def getpendinglist():
     for i in pendinglist:
         print(str(i))
 
+def readsave():
+    if os.path.exists("supernode.save"):
+    try:
+        fd=open("supernode.save",r)
+        masters=eval(fd.readline())
+        slaves=eval(fd.readline())
+        tasklist=eval(fd.readline())
+        pendinglist=eval(fd.readline())
+    except:
+        print("read file error")
+    finally:
+        fd.close()
+
 def getinput():
     while True:
         raw=input(">")
@@ -367,6 +380,9 @@ def getinput():
         if raw=="l":
             print(locklist["sync"])
         if raw=="flush":
+            flushtofile()
+        if raw=="r":
+            readsave()
 
 ocmdist={}
 ocmdist["server"] = socketserver.ThreadingTCPServer(addr,Servers)
