@@ -6,6 +6,9 @@ import socket
 import time
 import subprocess
 import json
+import os
+import uuid
+import sys
 #mongouri='mongodb://127.0.0.1:27017/ocbc'
 #a=MongoClient(mongouri)
 #b=a.ocbc
@@ -14,7 +17,7 @@ import json
 #for i in ret:
 #    print(i)
 
-addr=("18.18.25.29",18889)
+addr=("0.0.0.0",18889)
 
 masters={}#
 slaves={}#
@@ -60,22 +63,25 @@ class checkstate(threading.Thread):
                         taskrelist_m.append(ii)
                         deletelist_m.append(ii)
                         synclist_m[ii]=-2
-                #print(taskrelist_m)
+                print(taskrelist_m)
                 for j in taskrelist_m:
                     for x in slaves:
                         if slaves[x]["master"]==j:
-                            #print(slaves[x]["task"])
+                            print(slaves[x]["task"])
                             #for y in slaves[x]["task"]:
-                            if slaves[x]["requesttask"]!="":
-                                if slaves[x]["renttime"]>0:
-                                    pendinglist.append({"renttime":slaves[x]["renttime"],"taskid":slaves[x]["requesttask"]})
+                            for i in slaves[x]["task"]:
+                                if slaves[x]["task"][i]["remaintime"]>0:
+                                    print("pendinglist+taskrescan_m")
+                                    pendinglist.append({"remaintime":slaves[x]["task"][i]["remaintime"],"taskid":slaves[x]["task"][i]["taskid"]})
                                     taskrelist.remove(x)
-                #print(taskrelist)
+
+                print(taskrelist)
                 for kk in taskrelist:
                     #for x in slaves[kk]["task"]:
-                    if slaves[kk]["requesttask"]!="":
-                        if slaves[kk]["renttime"]>0:
-                            pendinglist.append({"renttime":slaves[kk]["renttime"],"taskid":slaves[kk]["requesttask"]})
+                    for i in slaves[kk]["task"]:
+                        if slaves[kk]["task"][i]["remaintime"]>0:
+                            print("pendinglist+taskrescan")
+                            pendinglist.append({"remaintime":slaves[x]["task"][i]["remaintime"],"taskid":slaves[x]["task"][i]["taskid"]})
                 for j in deletelist:
                     del slaves[j]
                     print("slaves["+j+"]deleted")
@@ -90,7 +96,7 @@ class checkstate(threading.Thread):
 
 
 
-class taskrescan(threading.Thread):
+class taskrescan(threading.Thread): #find proper slavenode and generate subtask
     def __init__(self):
         threading.Thread.__init__(self)
 
@@ -107,23 +113,21 @@ class taskrescan(threading.Thread):
                         locklist["sync"]=True
                         break
                 for j in pendinglist:
-                    for ii in slaves:
-                        if slaves[ii]["taskstate"]=="avaliable":
+                    if "subtaskid" not in j:
+                        for ii in slaves:
                             if ii not in slavesdoing:
                                 slavesdoing[ii]=0
                             if slavesdoing[ii]==0:
-                                if slaves[ii]["cpu"]>=tasklist[j["taskid"]]["cpu"]:
-                                    if slaves[ii]["mem"]>=tasklist[j["taskid"]]["mem"]:
-                                        if slaves[ii]["gpu"]>=tasklist[j["taskid"]]["gpu"]:
-                                            if informmaster(masters[slaves[ii]["master"]],ii,j["renttime"],j["taskid"]):
+                                if slaves[ii]["rcpu"]>=tasklist[j["taskid"]]["cpu"]:
+                                    if slaves[ii]["rmem"]>=tasklist[j["taskid"]]["mem"]:
+                                        if slaves[ii]["rgpu"]>=tasklist[j["taskid"]]["gpu"]:
+                                            if slaves[ii]["rdisk"]>=tasklist[j["taskid"]]["disk"]:
                                                 slavesdoing[ii]=1
-                                                leavelist.append(j)
-                                                slaves[ii]["taskstate"]="pending"
-                                                slaves[ii]["renttime"]=j["renttime"]
-                                                slaves[ii]["requesttask"]=j["taskid"]
+                                                j["subtaskid"]=str(uuid.uuid1())
+                                                j["slaveid"]=ii
+                                                j["master"]=slaves[ii]["master"]
                                                 break
-                for i in leavelist:
-                    pendinglist.remove(i)
+
             except Exception as e:
                 print(e)
             finally:
@@ -204,7 +208,7 @@ def launchtask(retjson):
                     locklist["sync"]=True
                     break
             for i in range(0,retjson["num"]):
-                pendinglist.append({"renttime":retjson["renttime"],"taskid":retjson["taskid"]})
+                pendinglist.append({"remaintime":retjson["renttime"],"taskid":retjson["taskid"]})
             locklist["sync"]=False
             return 0
         except Exception as e:
@@ -224,6 +228,7 @@ class Servers(SRH):
         retjson=""
         try:
             retjson=eval(data)
+            #print(retjson)
         except:
             print("json format error")
         if "event" in retjson:
@@ -235,21 +240,24 @@ class Servers(SRH):
                     if retjson["taskid"] in tasklist:
                         print("dump taskid")
                     else:
-                        output=subprocess.getoutput("md5sum /var/www/html/dist/"+retjson["taskid"]+".tar |awk '{printf $1}'")
+                        output=subprocess.getoutput("md5sum /var/www/html/dist/"+retjson["dockername"]+" |awk '{printf $1}'")
                         retjson["filemd5"]=output
                         tasklist[retjson["taskid"]]=retjson
                         tasklist[retjson["taskid"]]["alltime"]=retjson["renttime"]*retjson["num"]
                         ret=str(launchtask(retjson))
                         self.request.send(ret.encode())
-
+            elif retjson["event"]=="taskprocess":
+                for retjson["slaveid"] in slaves:
+                    slaves[retjson["slaveid"]]["process"]=retjson["process"]
             elif retjson["event"]=="mastersync":
-                try:
+                #try:
                     while True:
                         if locklist["sync"]:
                             time.sleep(1)
                         else:
                             locklist["sync"]=True
                             break
+                    #print("startsync")
                     masters[retjson["masternode"]["name"]]=self.client_address[0]
                     #start sync master
                     synclist_m[retjson["masternode"]["name"]]=0
@@ -259,47 +267,105 @@ class Servers(SRH):
                         #i=eval(j)
                         #print(i["_id"])
                         synclist[i["_id"]]=0
+
+                        #sync vales except task
                         if i["_id"] not in slaves:
                             slaves[i["_id"]]={}
-                            slaves[i["_id"]]["renttime"]=0
-                            slaves[i["_id"]]["task"]=[]
-                            slaves[i["_id"]]["spendtime"]=0
-                            slaves[i["_id"]]["requesttask"]=""
+                            slaves[i["_id"]]["task"]={}
                         slaves[i["_id"]]["cpu"]=i["cpu"]
                         slaves[i["_id"]]["gpu"]=i["gpu"]
                         slaves[i["_id"]]["mem"]=i["mem"]
                         slaves[i["_id"]]["time"]=i["time"]
                         slaves[i["_id"]]["master"]=retjson["masternode"]["name"]
+                        # new
+                        slaves[i["_id"]]["disk"]=i["disk"]
+                        slaves[i["_id"]]["rcpu"]=i["rcpu"]
+                        slaves[i["_id"]]["rgpu"]=i["rgpu"]
+                        slaves[i["_id"]]["rmem"]=i["rmem"]
+                        slaves[i["_id"]]["rdisk"]=i["rdisk"]
 
                         if i["status"]>0:
                             slaves[i["_id"]]["taskstate"]="working"
                         else:
                             slaves[i["_id"]]["taskstate"]="avaliable"
-                        taskdet=i["task"]
-                        #if taskdet==[] and slaves[i["_id"]]["renttime"]>0 and slaves[i["_id"]]["task"]!=[] and slaves[i["_id"]]["requesttask"]!="":
-                        #    pendinglist.append({"taskid":slaves[i["_id"]]["requesttask"],"renttime":slaves[i["_id"]]["renttime"]})
-                        #    slaves[i["_id"]]["spendtime"]=0
-                        slavetask=[]
-                        for x in taskdet:
-                            if "_id" in x:
-                                slavetask.append(x["taskid"])
-                                slaves[i["_id"]]["renttime"]=slaves[i["_id"]]["renttime"]-x["spendtime"]
-                                tasklist[x["taskid"]]["alltime"]=tasklist[x["taskid"]]["alltime"]-x["spendtime"]
-                                if slaves[i["_id"]]["renttime"]<=0:
-                                    print(i["_id"]+":finishtime")
-                        if taskdet==[] and slaves[i["_id"]]["renttime"]>0 and slaves[i["_id"]]["task"]!=[] and slaves[i["_id"]]["requesttask"]!="":
-                            pendinglist.append({"taskid":slaves[i["_id"]]["requesttask"],"renttime":slaves[i["_id"]]["renttime"]})
-                            slaves[i["_id"]]["spendtime"]=0
-                        slaves[i["_id"]]["task"]=slavetask
-                            #slaves[i["_id"]]["taskstate"]="avaliable"
-                        #slavesdoing[i["_id"]]=0
-                except Exception as e:
-                        print("whaterror")
-                finally:
-                        locklist["sync"]=False
+                        #print("starttasksync")
+                        #start sync (sub)task
+                        taskinreal=i["task"]
+                        taskindb=slaves[i["_id"]]["task"]
+                        dellist=[]
+                        for x in taskinreal: #(sub)tasks need to update
+                            print(taskindb)
+                            if x in taskindb:
+                                remaintime=taskindb[x]["remaintime"]-taskinreal[x]["spendtime"]
+                                taskremaintime=tasklist[taskindb[x]["taskid"]]["alltime"]-taskinreal[x]["spendtime"]
+                                if remaintime<=0:
+                                    print(x+":finish")
+                                if taskremaintime<=0:
+                                    print(taskindb[x]["taskid"]+":finish")
+                                slaves[i["_id"]]["task"][x]["remaintime"]=remaintime
+                                tasklist[taskindb[x]["taskid"]]["alltime"]=taskremaintime
+                            else: #strange (sub)task
+                                #if taskinreal[x]["taskid"] in tasklist:
+                                #    print("warning:slavenode report new task-"+taskinreal[x]["taskid"])
+                                #    taskindb[x]={"taskid":taskinreal[x]["taskid"],"remaintime":?}
+                                print("ERROR:"+x+" is a strange subtask")
+                        for y in taskindb: #(sub)tasks need to delete
+                            if y not in taskinreal:
+                                if taskindb[y]["remaintime"]>0:
+                                    print("pendinglist+mastersync")
+                                    pendinglist.append({"taskid":taskindb[y]["taskid"],"remaintime":taskindb[y]["remaintime"]})
+                                dellist.append(y)
+
+                        for k in dellist:#delete (sub)task
+                            del slaves[i["_id"]]["task"][k]
+
+                    #print("startsubtasksync")
+                    #master get (sub)task
+                    #launchtask=[]
+                    delplist=[]
+                    for p in pendinglist:
+                        if "master" in p:
+                          if p["master"]==retjson["masternode"]["name"]:
+                            if p["slaveid"] in slaves:
+                                print("getit")
+                                temp={}
+                                temp["cmd"]=tasklist[p["taskid"]]["cmd"]
+                                temp["dockername"]=tasklist[p["taskid"]]["dockername"]
+                                temp["slaveid"]=p["slaveid"]
+                                temp["renttime"]=p["remaintime"]
+                                temp["taskid"]=p["taskid"]
+                                temp["filemd5"]=tasklist[p["taskid"]]["filemd5"]
+                                temp["subtaskid"]=p["subtaskid"]
+                                temp["cpu"]=tasklist[p["taskid"]]["cpu"]
+                                temp["mem"]=tasklist[p["taskid"]]["mem"]
+                                temp["gpu"]=tasklist[p["taskid"]]["gpu"]
+                                temp["disk"]=tasklist[p["taskid"]]["disk"]
+                                #print("launchtask"+str(temp))
+                                self.request.send(("launchtask"+str(temp)).encode())
+                                ret=self.request.recv(64)
+                                ret1=ret.decode()
+                                if ret1=="launchsuccess":
+                                    print("received launchsuccess"+str(p))
+                                    slaves[p["slaveid"]]["task"][p["subtaskid"]]={"taskid":p["taskid"],"remaintime":p["remaintime"]}
+                                    delplist.append(p)
+                                else:#if launch fail
+                                    pass
+                            else:
+                                del p["slaveid"]
+                                del p["master"]
+                                del p["subtaskid"]
+                    self.request.send("nopendingtask".encode())
+                    for o in delplist:
+                        print(str(o)+"deleted from pendinglist")
+                        pendinglist.remove(o)
+
+                #except Exception as e:
+                #   print("whaterror")
+                #finally:
+                    locklist["sync"]=False
             elif retjson["event"]=="needfile":
                 if "taskid" in retjson:
-                    f = open("/var/www/html/dist/"+retjson["taskid"]+".tar",'rb')
+                    f = open("/var/www/html/dist/"+retjson["dockername"],'rb')
                     try:
                         l = f.read(1024)
                         while(l):
@@ -351,16 +417,20 @@ def getpendinglist():
 
 def readsave():
     if os.path.exists("supernode.save"):
-    try:
-        fd=open("supernode.save",r)
+      fd=open("supernode.save","r")
+      try:
         masters=eval(fd.readline())
         slaves=eval(fd.readline())
         tasklist=eval(fd.readline())
         pendinglist=eval(fd.readline())
-    except:
+      except:
         print("read file error")
-    finally:
+      finally:
         fd.close()
+
+ocmdist={}
+ocmdist["server"] = socketserver.ThreadingTCPServer(addr,Servers)
+
 
 def getinput():
     while True:
@@ -383,9 +453,11 @@ def getinput():
             flushtofile()
         if raw=="r":
             readsave()
-
-ocmdist={}
-ocmdist["server"] = socketserver.ThreadingTCPServer(addr,Servers)
+        if raw=="es":
+            ocmdist["server"].shutdown()
+            sys.exit(0)
+#ocmdist={}
+#ocmdist["server"] = socketserver.ThreadingTCPServer(addr,Servers)
 #server.serve_forever()
 
 class dlsocmserver(threading.Thread):
@@ -397,15 +469,16 @@ class dlsocmserver(threading.Thread):
         ocmdist["server"].serve_forever()
 
 if os.path.exists("supernode.save"):
+    fd=open("supernode.save","r")
     try:
-        fd=open("supernode.save",r)
         masters=eval(fd.readline())
         slaves=eval(fd.readline())
         tasklist=eval(fd.readline())
         pendinglist=eval(fd.readline())
     except:
         print("read file error")
-
+    finally:
+        fd.close()
 a=dlsocmserver()
 a.start()
 b=checkstate()
